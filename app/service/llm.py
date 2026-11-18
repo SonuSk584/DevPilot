@@ -6,6 +6,11 @@ from app.schemas.plan import TaskPlan
 from app.prompt.planner import planner_prompt
 from app.prompt.repository_analyst import repository_analyst_prompt
 from app.schemas.repository import RepositoryAnalysis
+from app.schemas.coding import CodeProposal
+from app.prompt.coder import coder_prompt
+from app.schemas.review import ReviewResult
+from app.prompt.reviewer import reviewer_prompt
+
 
 def get_llm():
     llm = ChatGroq(
@@ -44,3 +49,30 @@ def get_repository_analyst_chain():
     analyst = get_repository_analyst()
 
     return repository_analyst_prompt | analyst
+
+
+def get_coder():
+    llm = get_llm()
+
+    structured_llm = llm.with_structured_output(CodeProposal)
+
+    return structured_llm
+
+def get_coder_chain():
+    coder= get_coder()
+
+    return coder_prompt | coder
+
+
+def get_reviewer():
+    llm = get_llm()
+
+    structured_llm = llm.with_structured_output(ReviewResult)
+
+    return structured_llm
+
+def get_reviewer_chain():
+
+    reviewer = get_reviewer()
+
+    return reviewer_prompt | reviewer
