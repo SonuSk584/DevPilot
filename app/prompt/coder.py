@@ -28,6 +28,14 @@ Important rules:
 - Clearly state assumptions when information is missing.
 - If insufficient code context is supplied, explain the limitation.
 - Prefer minimal, maintainable changes.
+
+When previous review feedback is provided:
+- Carefully examine every reported issue.
+- Correct the identified problems.
+- Preserve changes that were already correct.
+- Do not ignore reviewer feedback.
+- If the feedback cannot be addressed with the supplied context,
+  explain the limitation in your assumptions.
 """
 
 
@@ -47,6 +55,9 @@ coder_prompt = ChatPromptTemplate.from_messages([
 
         Repository Code:
         {repository_context}
+
+        Previous Review Feedback:
+        {review_feedback}
 
         Generate a structured code proposal.
         """
