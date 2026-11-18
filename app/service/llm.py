@@ -2,6 +2,8 @@ from langchain_groq import ChatGroq
 from app.core.config import settings
 
 from app.prompt.system import chat_prompt
+from app.schemas.plan import TaskPlan
+from app.prompt.planner import planner_prompt
 
 def get_llm():
     llm = ChatGroq(
@@ -18,3 +20,13 @@ def get_chat_chain():
     chain = chat_prompt | llm
 
     return chain
+
+def get_planner():
+    llm= get_llm()
+    structured_llm = llm.with_structured_output(TaskPlan)
+    return structured_llm
+
+def get_planner_chain():
+    planner = get_planner()
+
+    return planner_prompt | planner

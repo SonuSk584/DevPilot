@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.api.routes import health, chat
+from app.api.routes import health, chat,planner
 from app.core.config import settings
 
 
@@ -11,3 +11,4 @@ app = FastAPI(
 
 app.include_router(health.router)
 app.include_router(chat.router, prefix="/api/v1")
+app.include_router(planner.router,prefix="/api/v1")
