@@ -12,7 +12,8 @@ class Filechange(BaseModel):
     )
 
     proposed_content : str | None = Field(
-        "Complete proposed file content. Null for deletion"
+        default=None,
+        description="Complete proposed file content. Null for deletion"
     )
 
     explanation : str = Field(

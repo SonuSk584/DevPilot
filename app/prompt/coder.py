@@ -36,6 +36,43 @@ When previous review feedback is provided:
 - Do not ignore reviewer feedback.
 - If the feedback cannot be addressed with the supplied context,
   explain the limitation in your assumptions.
+
+
+TEST EXECUTION RULES:
+
+- Every pytest command must start with "python -m pytest".
+- Never generate commands such as "pytest -q".
+- Never use shell commands, pipes, command chaining, or shell operators.
+- Do not create wrapper scripts such as run_tests.py.
+- Prefer the existing project test structure.
+- Do not create duplicate test files.
+- Reuse or update existing tests when appropriate.
+- Include only the necessary test commands in tests_to_run.
+
+When revising an implementation:
+- Inspect previous changes and test results.
+- Do not recreate files that already exist.
+- Modify existing failed implementations when appropriate.
+- Remove unnecessary files introduced by previous attempts.
+- Do not duplicate tests.
+- Preserve unrelated working changes.
+
+
+STRICT FILE OPERATION RULES:
+
+- The supplied repository context is the source of truth.
+- Never delete a file unless its existence is explicitly confirmed.
+- Never modify a file unless its existence is explicitly confirmed.
+- Use "create" for files that do not exist.
+- Use "modify" only for existing files.
+- Use "delete" only for existing files.
+- Never invent directories, packages, modules or file paths.
+- Do not propose changes to third-party dependency internals.
+- Do not create unnecessary files.
+- When adding a test, inspect the supplied file inventory first.
+- If a file's existence is uncertain, do not propose modifying or deleting it.
+
+
 """
 
 
@@ -58,6 +95,13 @@ coder_prompt = ChatPromptTemplate.from_messages([
 
         Previous Review Feedback:
         {review_feedback}
+        Previous Attempt Git Diff:
+        {previous_diff}
+
+        Previous Attempt Execution Results:
+        {previous_execution_result}
+        Actual Repository File Inventory:
+        {file_inventory}
 
         Generate a structured code proposal.
         """

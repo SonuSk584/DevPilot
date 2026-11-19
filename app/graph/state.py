@@ -11,6 +11,8 @@ class DevPilotState(TypedDict):
     # Initial input
     task: str
     repository_context: str
+    workspace_path: str
+    file_inventory: str
 
     # Agent outputs
     plan: NotRequired[TaskPlan]
@@ -18,6 +20,13 @@ class DevPilotState(TypedDict):
     code_proposal: NotRequired[CodeProposal]
     review_result: NotRequired[ReviewResult]
 
+    # Execution outputs
+    patch_result: NotRequired[dict]
+    diff_result: NotRequired[dict]
+    execution_result: NotRequired[dict]
+    
+
     # Retry management
     revision_count: NotRequired[int]
     review_feedback: NotRequired[str]
+    attempt_history: NotRequired[list[dict]]

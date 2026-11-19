@@ -8,10 +8,16 @@ graph TD;
 	planner(planner)
 	repository_analyst(repository_analyst)
 	coder(coder)
+	patch_engine(patch_engine)
+	diff_manager(diff_manager)
+	code_executor(code_executor)
 	reviewer(reviewer)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> planner;
-	coder --> reviewer;
+	code_executor --> reviewer;
+	coder --> patch_engine;
+	diff_manager --> code_executor;
+	patch_engine --> diff_manager;
 	planner --> repository_analyst;
 	repository_analyst --> coder;
 	reviewer -. &nbsp;end&nbsp; .-> __end__;

@@ -13,6 +13,7 @@ IGNORED_DIRECTORIES = {
     ".mypy_cache",
     "dist",
     "build",
+    ".devpilot-venv",
 }
 
 IGNORED_FILES = {
