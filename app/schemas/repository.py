@@ -35,3 +35,17 @@ class repositoryAnalysisRequest(BaseModel):
         max_length=30000,
         description="Repository files and code snippet"
     )
+
+
+
+class RepositoryTaskRequest(BaseModel):
+    repository_name: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[a-zA-Z0-9_-]+$"
+    )
+
+    task: str = Field(
+        min_length=5,
+        max_length=2000
+    )

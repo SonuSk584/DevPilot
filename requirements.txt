@@ -4,3 +4,5 @@ langchain
 langchain-groq
 pydantic-settings
 python-dotenv
+GitPython
+langgraph

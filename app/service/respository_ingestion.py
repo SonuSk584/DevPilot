@@ -6,7 +6,7 @@ from app.service.context_builder import build_repository_context
 
 
 WORKSPACE_ROOT = (
-    Path.home() / "devpilot-workspace"
+    Path.home() / "DEV AI" / "devpilot-workspace"
 ).resolve()
 
 

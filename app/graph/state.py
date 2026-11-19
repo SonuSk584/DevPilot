@@ -1,3 +1,4 @@
+
 from typing import TypedDict, NotRequired
 
 from app.schemas.plan import TaskPlan
@@ -7,15 +8,16 @@ from app.schemas.review import ReviewResult
 
 
 class DevPilotState(TypedDict):
+    # Initial input
     task: str
-    repository_context : str
-    #agent outputs
-    plan : TaskPlan
-    repository_analysis: RepositoryAnalysis
-    code_proposal: CodeProposal
-    review_result: ReviewResult
+    repository_context: str
 
-    #retry management
+    # Agent outputs
+    plan: NotRequired[TaskPlan]
+    repository_analysis: NotRequired[RepositoryAnalysis]
+    code_proposal: NotRequired[CodeProposal]
+    review_result: NotRequired[ReviewResult]
 
-    revision_count = NotRequired[int]
-    review_feedback = NotRequired[str]
+    # Retry management
+    revision_count: NotRequired[int]
+    review_feedback: NotRequired[str]
