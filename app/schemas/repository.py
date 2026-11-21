@@ -1,29 +1,27 @@
-from pydantic import BaseModel , Field
+from pydantic import BaseModel, Field
+
 
 class RepositoryAnalysis(BaseModel):
-    summary : str = Field(description="Summary of the repository Investigation")
-
-    relevant_files : list[str] = Field(
-        description="Repository files relevant to the requested task"
+    relevant_files: list[str] = Field(
+        max_length=8,
+        description="Paths from the inventory that matter for this task"
     )
-    findings: list[str] = Field(
-        description="Important observations based on the supplied code evidence"
+    where_to_change: list[str] = Field(
+        max_length=6,
+        description="File and function/location to modify or extend"
     )
-
-    potential_causes: list[str] = Field(
-        description="Possible causes of the reported issue"
+    conventions: list[str] = Field(
+        default_factory=list, max_length=5,
+        description="Framework, import style, naming and patterns to follow"
     )
-
-    recommended_actions: list[str] = Field(
-        description="Recommended next investigation or implementation steps"
+    constraints: list[str] = Field(
+        default_factory=list, max_length=5,
+        description="Things in the code that could break existing behavior"
     )
-
-    confidence: float = Field (
-        ge=0,
-        le=1,
-        description="Confidence in the analysis , between 0 to 1"
+    missing_context: list[str] = Field(
+        default_factory=list, max_length=4,
+        description="What could not be seen. Empty if nothing."
     )
-
 class repositoryAnalysisRequest(BaseModel):
     task: str = Field(
         min_length= 5,

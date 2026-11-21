@@ -4,8 +4,9 @@ import subprocess
 import time
 from pathlib import Path
 import uuid
+from app.core.config import settings
 
-DOCKER_IMAGE = "python:3.12-slim"
+DOCKER_IMAGE = settings.SANDBOX_IMAGE
 
 DEFAULT_TIMEOUT = 30
 MAX_TIMEOUT = 120
@@ -16,7 +17,8 @@ ALLOWED_COMMANDS = {"python", "python3"}
 def execute_code(
     workspace_path: str,
     command: list[str],
-    timeout: int = DEFAULT_TIMEOUT
+    timeout: int = DEFAULT_TIMEOUT,
+    read_only : bool = False
 ) -> dict:
     """
     Execute an allowed Python command inside a restricted Docker container.
@@ -44,19 +46,16 @@ def execute_code(
             f"Timeout must be between 1 and {MAX_TIMEOUT} seconds"
         )
 
-    # Detect project virtual environment.
-    venv_python = root / ".devpilot-venv" / "bin" / "python"
+       # Detect project virtual environment.
+    # Use the Python interpreter provided by the Docker image.
+    python_executable = command[0]
 
-    if venv_python.is_file() or venv_python.is_symlink():
-        python_executable = "/workspace/.devpilot-venv/bin/python"
-    else:
-        python_executable = command[0]
-
-    # Replace the requested interpreter with the selected interpreter.
     execution_command = [
-        python_executable,
-        *command[1:]
-    ]
+    python_executable,
+    *command[1:]
+]
+    print(f"[DOCKER] Selected Python: {python_executable}")
+
 
     uid = os.getuid()
     gid = os.getgid()
@@ -78,7 +77,10 @@ def execute_code(
         "--user", f"{uid}:{gid}",
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m",
         "--mount",
-        f"type=bind,source={root},target=/workspace",
+        (
+            f"type=bind,source={root},target=/workspace"
+            + (",readonly" if read_only else "")
+        ),
         "--workdir", "/workspace",
         DOCKER_IMAGE,
         *execution_command

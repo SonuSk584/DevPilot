@@ -6,6 +6,8 @@ from app.schemas.repository import RepositoryAnalysis
 from app.schemas.coding import CodeProposal
 from app.schemas.review import ReviewResult
 
+from app.schemas.retry import RetryAnalysis
+
 
 class DevPilotState(TypedDict):
     # Initial input
@@ -24,9 +26,11 @@ class DevPilotState(TypedDict):
     patch_result: NotRequired[dict]
     diff_result: NotRequired[dict]
     execution_result: NotRequired[dict]
-    
+
 
     # Retry management
     revision_count: NotRequired[int]
     review_feedback: NotRequired[str]
     attempt_history: NotRequired[list[dict]]
+    retry_analysis: NotRequired[RetryAnalysis]
+    verification_result: NotRequired[dict]

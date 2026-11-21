@@ -12,16 +12,20 @@ graph TD;
 	diff_manager(diff_manager)
 	code_executor(code_executor)
 	reviewer(reviewer)
+	attempt_recorder(attempt_recorder)
+	retry_intelligence(retry_intelligence)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> planner;
+	attempt_recorder --> retry_intelligence;
 	code_executor --> reviewer;
 	coder --> patch_engine;
 	diff_manager --> code_executor;
 	patch_engine --> diff_manager;
 	planner --> repository_analyst;
 	repository_analyst --> coder;
-	reviewer -. &nbsp;end&nbsp; .-> __end__;
-	reviewer -.-> coder;
+	retry_intelligence -. &nbsp;end&nbsp; .-> __end__;
+	retry_intelligence -.-> coder;
+	reviewer --> attempt_recorder;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc

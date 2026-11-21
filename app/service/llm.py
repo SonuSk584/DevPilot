@@ -10,14 +10,15 @@ from app.schemas.coding import CodeProposal
 from app.prompt.coder import coder_prompt
 from app.schemas.review import ReviewResult
 from app.prompt.reviewer import reviewer_prompt
-
+from app.schemas.retry import RetryAnalysis
+from app.prompt.retry_intelligence import retry_intelligence_prompt
 
 def get_llm():
     llm = ChatGroq(
         model=settings.GROQ_MODEL,
         api_key=settings.GROQ_API_KEY.get_secret_value(),
         temperature=0
-        
+
     )
     return llm
 
@@ -76,3 +77,22 @@ def get_reviewer_chain():
     reviewer = get_reviewer()
 
     return reviewer_prompt | reviewer
+
+
+
+def get_retry_intelligence():
+
+    llm = get_llm()
+
+    structured_llm = llm.with_structured_output(
+        RetryAnalysis
+    )
+
+    return structured_llm
+
+
+def get_retry_intelligence_chain():
+
+    intelligence = get_retry_intelligence()
+
+    return retry_intelligence_prompt | intelligence

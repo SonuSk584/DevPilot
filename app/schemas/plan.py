@@ -1,20 +1,32 @@
 from pydantic import BaseModel, Field
 
+
 class TaskPlan(BaseModel):
-    task_summary : str = Field(
-        description="A short summary of the requested task"
+    task_summary: str = Field(
+        description="One-sentence summary of the task"
+    )
+    constraints: list[str] = Field(
+        default_factory=list,
+        description="Explicit user constraints, copied verbatim. Empty if none."
+    )
+    allowed_files: list[str] = Field(
+        description="Files that may be created or modified. "
+                    "Existing files must come from the inventory."
     )
     steps: list[str] = Field(
-        description="ordered steps required to complete the task"
-
+        max_length=6,
+        description="Ordered steps; each names the file and the change"
+    )
+    risks: list[str] = Field(
+        default_factory=list,
+        max_length=3,
+        description="Risks specific to this repository. Empty if none."
+    )
+    verification: str = Field(
+        description="Test command to run, or 'no tests allowed' if the "
+                    "constraints forbid test files"
     )
 
-    risks: list[str]= Field(
-        description="Potentiall risks or challenges"
-    )
-    requires_repository : bool = Field(
-        description="whether respository access is necessary"
-    )
 
 class PlanRequest(BaseModel):
     task: str = Field(
