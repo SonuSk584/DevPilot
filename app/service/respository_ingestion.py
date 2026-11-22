@@ -45,5 +45,6 @@ def ingest_repository(repository_name: str) -> dict:
     "context_characters": len(context),
     "context_preview": context[:1000],
     "message": "Repository ingested successfully",
-    "context": context
+    "context": context,
+    "file_inventory": "\n".join(discovered_files),
     }

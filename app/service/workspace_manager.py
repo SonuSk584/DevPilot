@@ -35,6 +35,15 @@ def create_workspace(repository_name: str) -> dict:
         repo = Repo(source_path, search_parent_directories=False)
     except InvalidGitRepositoryError:
         raise ValueError("The selected directory is not a Git repository")
+    # Require a clean working tree before creating the clone.
+    if repo.is_dirty(untracked_files=True):
+        raise ValueError(
+            "Repository has uncommitted or untracked changes. "
+            "Please commit or stash them before starting DevPilot."
+    )
+
+# Record the original repository version.
+    original_head_commit = repo.head.commit.hexsha
 
     # Generate a unique workspace directory.
     workspace_id = uuid.uuid4().hex[:12]
@@ -48,11 +57,13 @@ def create_workspace(repository_name: str) -> dict:
         Repo.clone_from(source_path, destination_path, local=True)
 
         return {
-            "workspace_id": workspace_id,
-            "repository_name": repository_name,
-            "workspace_path": str(destination_path),
-            "message": "Workspace created successfully"
-        }
+    "workspace_id": workspace_id,
+    "repository_name": repository_name,
+    "original_project_path": str(source_path),
+    "workspace_path": str(destination_path),
+    "original_head_commit": original_head_commit,
+    "message": "Workspace created successfully"
+}
 
     except Exception:
         # Remove incomplete workspace if cloning fails.

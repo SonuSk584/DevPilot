@@ -9,6 +9,7 @@ from app.graph.state import DevPilotState
 from app.service.patch_engine import apply_code_proposal
 from app.service.diff_manager import get_workspace_diff
 from app.service.code_executor import execute_code
+from langgraph.types import interrupt
 
 from app.service.llm import (
     get_planner_chain,
@@ -341,11 +342,11 @@ def diff_manager_node(state: DevPilotState):
         )
 
         return {
-            "diff_result": {
-                "status": "success",
-                "data": result
-            }
-        }
+    "diff_result": {
+        "status": "success",
+        **result
+    }
+}
 
     except Exception as error:
         return {
@@ -364,12 +365,15 @@ def diff_manager_node(state: DevPilotState):
 # Helpers
 # --------------------------------------------------
 
+
 def _changed_python_files(diff_result: dict) -> list[str]:
-    files = (diff_result.get("data") or {}).get("files", [])
+    files = diff_result.get("files", [])
+
     return [
         f["file_path"]
         for f in files
-        if f["file_path"].endswith(".py") and f["change_type"] != "deleted"
+        if f["file_path"].endswith(".py")
+        and f["change_type"] != "deleted"
     ]
 
 
@@ -595,29 +599,37 @@ def code_executor_node(state: "DevPilotState"):
 
     return {"execution_result": execution_result}
 
+
+
 def attempt_recorder_node(state: DevPilotState):
     """
-    Record a COMPACT summary of the current coding attempt.
-    Full proposals/diffs are not stored, because attempt_history is fed
-    back into LLM prompts and would otherwise grow without bound.
+    Record a compact summary of the current coding attempt.
     """
 
-    proposal = state.get("code_proposal")
     patch_result = state.get("patch_result", {})
     execution_result = state.get("execution_result", {})
     review_result = state.get("review_result")
+    diff_result = state.get("diff_result") or {}
+
+    current_count = state.get("revision_count", 0)
+    next_count = current_count + 1
+
+    changed_files = [
+        item["file_path"]
+        for item in diff_result.get("files", [])
+    ]
 
     attempt = {
-        "attempt_number": state.get("revision_count", 0),
-
-        "files_changed": changed_files(proposal),
-
+        "attempt_number": next_count,
+        "files_changed": changed_files,
         "patch_status": patch_result.get("status"),
-        "patch_error": truncate(patch_result.get("error", ""), 300),
-
+        "patch_error": truncate(
+            patch_result.get("error", ""), 300
+        ),
         "execution_status": execution_result.get("status"),
-        "failure_output": extract_failures(execution_result, 800),
-
+        "failure_output": extract_failures(
+            execution_result, 800
+        ),
         "review_summary": (
             truncate(review_result.summary, 400)
             if review_result else None
@@ -631,17 +643,17 @@ def attempt_recorder_node(state: DevPilotState):
     history = list(state.get("attempt_history", []))
 
     return {
+        "revision_count": next_count,
         "attempt_history": history + [attempt]
     }
 
 
+
+
 async def retry_intelligence_node(state: DevPilotState):
     """
-    Analyze current and historical failures and generate
-    an intelligent correction strategy.
-
-    NOTE: this matches the slimmed prompt template, which only uses:
-    task, review_feedback, diff_result, execution_result, attempt_history.
+    Analyze current and historical failures, including
+    human-requested revisions, and generate a correction strategy.
     """
 
     intelligence = get_retry_intelligence_chain()
@@ -660,8 +672,17 @@ async def retry_intelligence_node(state: DevPilotState):
             800
         ),
 
+        "human_feedback": truncate(
+            state.get(
+                "human_feedback",
+                "None"
+            ),
+            1000
+        ),
+
         "diff_result": truncate(
-            state.get("diff_result", {}), 1200
+            state.get("diff_result", {}),
+            1200
         ),
 
         "execution_result": extract_failures(
@@ -672,10 +693,14 @@ async def retry_intelligence_node(state: DevPilotState):
             recent_history,
             default=str
         ),
+
         "verification_result": truncate(
-        state.get("verification_result", "No additional verification performed."),
-        1200
-)
+            state.get(
+                "verification_result",
+                "No additional verification performed."
+            ),
+            1200
+        )
     })
 
     print("\n[RETRY INTELLIGENCE]")
@@ -688,6 +713,7 @@ async def retry_intelligence_node(state: DevPilotState):
     return {
         "retry_analysis": result
     }
+
 
 def verification_node(state: DevPilotState):
     """
@@ -794,3 +820,66 @@ def verification_node(state: DevPilotState):
     print(verification_result)
 
     return {"verification_result": verification_result}
+
+
+def human_approval_node(state: DevPilotState):
+    """
+    Pause DevPilot and request a human decision
+    after the AI Reviewer approves the implementation.
+    """
+
+    diff_result = state.get("diff_result") or {}
+
+    approval_request = {
+        "message": "Human approval required before applying changes.",
+        "task": state["task"],
+        "review_summary": (
+            state["review_result"].summary
+            if state.get("review_result")
+            else "No review summary available."
+        ),
+        "changed_files": diff_result.get("files", []),
+        "diff": diff_result.get("diff", ""),
+        "total_changed_files": diff_result.get(
+            "total_changed_files", 0
+        ),
+        "available_decisions": [
+            "approve",
+            "reject",
+            "request_changes"
+        ]
+    }
+
+    decision = interrupt(approval_request)
+
+    if not isinstance(decision, dict):
+        raise ValueError("Human approval must be a dictionary.")
+
+    action = decision.get("decision")
+
+    if action not in {"approve", "reject", "request_changes"}:
+        raise ValueError("Invalid human approval decision.")
+
+    feedback = decision.get("feedback", "")
+
+    if action == "request_changes" and (
+        not isinstance(feedback, str) or not feedback.strip()
+    ):
+        raise ValueError(
+            "Feedback is required when requesting changes."
+        )
+
+    print(f"[HUMAN APPROVAL] Decision: {action}")
+
+    return {
+        "human_decision": action,
+        "human_feedback": (
+            feedback.strip()
+            if isinstance(feedback, str)
+            else ""
+        ),
+        "human_revision_count": (
+            state.get("human_revision_count", 0)
+            + (1 if action == "request_changes" else 0)
+        )
+    }

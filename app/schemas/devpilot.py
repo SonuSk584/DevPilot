@@ -1,5 +1,6 @@
 
 from pydantic import BaseModel, Field
+from typing import Any, Literal
 
 from app.schemas.plan import TaskPlan
 from app.schemas.repository import RepositoryAnalysis
@@ -20,13 +21,44 @@ class DevPilotRequest(BaseModel):
 
 
 
+
+
+
 class DevPilotResponse(BaseModel):
     repository_name: str
     task: str
-    plan: TaskPlan
-    repository_analysis: RepositoryAnalysis
-    code_proposal: CodeProposal
-    review_result: ReviewResult
-    revision_count: int
+
+    thread_id: str
+
+    status: Literal[
+        "awaiting_human_approval",
+        "completed",
+        "rejected",
+        "stopped"
+    ]
+
+    plan: TaskPlan | None = None
+    repository_analysis: RepositoryAnalysis | None = None
+    code_proposal: CodeProposal | None = None
+    review_result: ReviewResult | None = None
+
+    revision_count: int = 0
+
+    approval_request: dict[str, Any] | None = None
+    diff_result: dict[str, Any] | None = None
+
     message: str
 
+
+
+class HumanApprovalRequest(BaseModel):
+    decision: Literal[
+        "approve",
+        "reject",
+        "request_changes"
+    ]
+
+    feedback: str = Field(
+        default="",
+        max_length=2000
+    )

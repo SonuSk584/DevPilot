@@ -15,6 +15,9 @@ class DevPilotState(TypedDict):
     repository_context: str
     workspace_path: str
     file_inventory: str
+    original_project_path: NotRequired[str]
+    workspace_id: NotRequired[str]
+    repository_name: NotRequired[str]
 
     # Agent outputs
     plan: NotRequired[TaskPlan]
@@ -34,3 +37,10 @@ class DevPilotState(TypedDict):
     attempt_history: NotRequired[list[dict]]
     retry_analysis: NotRequired[RetryAnalysis]
     verification_result: NotRequired[dict]
+    human_feedback: NotRequired[str]
+    human_decision: NotRequired[str]
+    approval_request: NotRequired[dict]
+    application_result: NotRequired[dict]
+    human_revision_count: NotRequired[int]
+
+    original_head_commit: NotRequired[str]

@@ -157,6 +157,7 @@ VERIFICATION RESULT INTERPRETATION:
    of a verification-only decision.
 
 
+
 REVIEW RESULT INTERPRETATION:
 
 1. Read the complete reviewer feedback, including:
@@ -167,17 +168,18 @@ REVIEW RESULT INTERPRETATION:
    - Recommended tests
 
 2. If Review approved is True:
-   - Do not recommend a coding retry.
-   - Do not classify optional test recommendations as review rejection.
-   - Treat the implementation as accepted by the Reviewer.
+   - If human_feedback is empty, "None", or contains no explicit revision request, do not recommend a coding retry solely because of reviewer feedback.
+   - If human_feedback contains an explicit request for changes, treat it as a new revision requirement.
+   - A concrete human revision request may justify decision="retry" and should_retry=True, even when the AI Reviewer approved the previous implementation.
+   - Human feedback overrides the no-retry instruction, but does not override the original task, explicit user constraints, or safety requirements.
+   - Treat the implementation as technically accepted by the Reviewer, not necessarily accepted by the human.
 
 3. If Review approved is False:
    - Examine the findings and required changes.
    - Identify whether an actual implementation correction is necessary.
    - Do not assume every finding requires a source-code modification.
 
-4. Required changes are blockers that must be addressed
-   before the implementation can be approved.
+4. Required changes are blockers that must be addressed before the implementation can be approved.
 
 5. Recommended tests are not automatically mandatory corrections.
    Their presence alone is not a reason to modify source files.
@@ -188,9 +190,42 @@ REVIEW RESULT INTERPRETATION:
    - Add test-only imports to production files.
    - Modify files prohibited by the user's constraints.
 
-7. If existing execution evidence already verifies the requested
-   behavior, do not report a verification gap without identifying
-   a specific missing verification requirement.
+7. If existing execution evidence already verifies the requested behavior, do not report a verification gap without identifying a specific missing verification requirement.
+
+HUMAN FEEDBACK INTERPRETATION:
+
+1. Human feedback represents explicit instructions from the
+   person reviewing the proposed changes.
+
+2. Treat human feedback as a separate source of requirements,
+   not as ordinary reviewer feedback or an execution failure.
+
+3. Identify exactly what the human wants changed, preserved,
+   removed, or avoided.
+
+4. Compare human feedback against:
+   - The original task.
+   - Existing implementation.
+   - Current diff.
+   - Previous attempts.
+   - Explicit user constraints.
+
+5. Preserve all previously successful implementation work
+   unless human feedback explicitly requests otherwise.
+
+6. Do not weaken or ignore human requirements during retry.
+
+7. If human feedback requests a concrete implementation change:
+   - Set failure_type to "implementation_error" when appropriate.
+   - Set decision to "retry".
+   - Set should_retry to True.
+   - Include the human's requested changes in correction_strategy.
+
+8. If human feedback is unclear or conflicts with existing
+   requirements, recommend stopping rather than guessing.
+
+9. Set decision to "retry" when the requested change requires implementation work.
+10. Set should_retry to True only when the requested change is concrete, feasible, and consistent with the original task and constraints.
 
 
 
@@ -398,6 +433,7 @@ Return a valid RetryAnalysis object containing:
   - verify requires should_retry = False.
   - stop requires should_retry = False.
 
+  
 
 Ensure every returned field matches the RetryAnalysis schema.
 Do not include unsupported fields or invalid enum values.
@@ -410,7 +446,11 @@ TASK:
 {task}
 
 CURRENT REVIEW FEEDBACK:
+
 {review_feedback}
+
+HUMAN FEEDBACK:
+{human_feedback}
 
 DIFF RESULT:
 {diff_result}

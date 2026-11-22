@@ -13,7 +13,8 @@ from app.graph.nodes import (
     reviewer_node,
     attempt_recorder_node,
     retry_intelligence_node,
-    verification_node
+    verification_node,
+    human_approval_node
 )
 
 MAX_CODER_ATTEMPT = 3
@@ -30,7 +31,12 @@ def route_after_patch(state: DevPilotState):
     if patch.get("status") == "success":
         return "diff"
 
-    if state.get("revision_count", 0) >= MAX_CODER_ATTEMPT:
+    total_attempts = (
+        state.get("revision_count", 0)
+        + state.get("human_revision_count", 0)
+    )
+
+    if total_attempts >= MAX_CODER_ATTEMPT:
         print("[ROUTER] Patch failed and no attempts remain. Ending workflow.")
         return "end"
 
@@ -63,15 +69,15 @@ def route_after_execution(state: DevPilotState):
 
 
 def route_after_review(state: DevPilotState):
-    """Approved runs skip the recorder and the Retry Intelligence LLM call."""
+    """Send Reviewer-approved changes to human approval."""
+
     review = state.get("review_result")
 
     if review is not None and review.approved:
-        print("[ROUTER] Review approved. Ending workflow.")
-        return "end"
+        print("[ROUTER] Reviewer approved. Requesting human approval.")
+        return "approval"
 
     return "recorder"
-
 
 
 def route_after_verification(state: DevPilotState):
@@ -106,8 +112,13 @@ def retry_router(state: DevPilotState):
         return "verify"
 
     if retry_analysis.decision == "retry":
-        if state.get("revision_count", 0) >= MAX_CODER_ATTEMPT:
-            print("[ROUTER] Maximum attempts reached.")
+        total_attempts = (
+            state.get("revision_count", 0)
+            + state.get("human_revision_count", 0)
+        )
+
+        if total_attempts >= MAX_CODER_ATTEMPT:
+            print("[ROUTER] Maximum combined revision attempts reached.")
             return "end"
 
         if not retry_analysis.should_retry:
@@ -121,12 +132,31 @@ def retry_router(state: DevPilotState):
     return "end"
 
 
+def route_after_human_approval(state: DevPilotState):
+    """Route according to the human's decision."""
+
+    decision = state.get("human_decision")
+
+    if decision == "approve":
+        print("[ROUTER] Human approved changes.")
+        return "end"  # Temporary: application node comes next.
+
+    if decision == "reject":
+        print("[ROUTER] Human rejected changes.")
+        return "end"
+
+    if decision == "request_changes":
+        print("[ROUTER] Human requested revisions.")
+        return "retry_intelligence"
+
+    print("[ROUTER] Invalid human decision. Ending workflow.")
+    return "end"
 
 # --------------------------------------------------
 # Graph
 # --------------------------------------------------
 
-def build_devpilot_graph():
+def build_devpilot_graph(checkpointer=None):
 
     g = StateGraph(DevPilotState)
 
@@ -140,6 +170,7 @@ def build_devpilot_graph():
     g.add_node("attempt_recorder", attempt_recorder_node)
     g.add_node("retry_intelligence", retry_intelligence_node)
     g.add_node("verification", verification_node)
+    g.add_node("human_approval", human_approval_node)
 
     g.add_edge(START, "planner")
     g.add_edge("planner", "repository_analyst")
@@ -159,9 +190,21 @@ def build_devpilot_graph():
         {"reviewer": "reviewer", "end": END},
     )
     g.add_conditional_edges(
-        "reviewer", route_after_review,
-        {"recorder": "attempt_recorder", "end": END},
-    )
+    "reviewer",
+    route_after_review,
+    {
+        "approval": "human_approval",
+        "recorder": "attempt_recorder",
+    },
+)
+    g.add_conditional_edges(
+    "human_approval",
+    route_after_human_approval,
+    {
+        "retry_intelligence": "retry_intelligence",
+        "end": END,
+    },
+)
 
     g.add_edge("attempt_recorder", "retry_intelligence")
 
@@ -184,4 +227,4 @@ def build_devpilot_graph():
     },
         )
 
-    return g.compile()
+    return g.compile(checkpointer=checkpointer)
