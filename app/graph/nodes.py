@@ -10,6 +10,7 @@ from app.service.patch_engine import apply_code_proposal
 from app.service.diff_manager import get_workspace_diff
 from app.service.code_executor import execute_code
 from langgraph.types import interrupt
+from app.service.change_applier import apply_approved_changes
 
 from app.service.llm import (
     get_planner_chain,
@@ -883,3 +884,48 @@ def human_approval_node(state: DevPilotState):
             + (1 if action == "request_changes" else 0)
         )
     }
+
+
+def apply_approved_changes_node(state: DevPilotState):
+    """
+    Apply changes to the original repository after human approval.
+    """
+
+    if state.get("human_decision") != "approve":
+        return {
+            "application_result": {
+                "status": "rejected",
+                "message": "Human approval is required."
+            }
+        }
+
+    try:
+        backup_root = (
+            Path(__file__).resolve().parents[2]
+            / "data"
+            / "backups"
+        )
+
+        result = apply_approved_changes(
+            repository_path=state["original_project_path"],
+            workspace_path=state["workspace_path"],
+            diff_result=state["diff_result"],
+            original_head_commit=state["original_head_commit"],
+            backup_root=str(backup_root)
+        )
+
+        print("[APPLICATION] Approved changes applied successfully.")
+
+        return {
+            "application_result": result
+        }
+
+    except Exception as error:
+        print(f"[APPLICATION] Failed: {error}")
+
+        return {
+            "application_result": {
+                "status": "failed",
+                "message": str(error)
+            }
+        }

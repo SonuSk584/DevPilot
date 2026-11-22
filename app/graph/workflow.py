@@ -14,7 +14,8 @@ from app.graph.nodes import (
     attempt_recorder_node,
     retry_intelligence_node,
     verification_node,
-    human_approval_node
+    human_approval_node,
+    apply_approved_changes_node
 )
 
 MAX_CODER_ATTEMPT = 3
@@ -138,8 +139,8 @@ def route_after_human_approval(state: DevPilotState):
     decision = state.get("human_decision")
 
     if decision == "approve":
-        print("[ROUTER] Human approved changes.")
-        return "end"  # Temporary: application node comes next.
+        print("[ROUTER] Human approved changes. Applying changes.")
+        return "apply"
 
     if decision == "reject":
         print("[ROUTER] Human rejected changes.")
@@ -171,6 +172,7 @@ def build_devpilot_graph(checkpointer=None):
     g.add_node("retry_intelligence", retry_intelligence_node)
     g.add_node("verification", verification_node)
     g.add_node("human_approval", human_approval_node)
+    g.add_node("apply_changes", apply_approved_changes_node)
 
     g.add_edge(START, "planner")
     g.add_edge("planner", "repository_analyst")
@@ -201,6 +203,7 @@ def build_devpilot_graph(checkpointer=None):
     "human_approval",
     route_after_human_approval,
     {
+        "apply": "apply_changes",
         "retry_intelligence": "retry_intelligence",
         "end": END,
     },
@@ -226,5 +229,7 @@ def build_devpilot_graph(checkpointer=None):
         "end": END,
     },
         )
+
+    g.add_edge("apply_changes", END)
 
     return g.compile(checkpointer=checkpointer)

@@ -110,12 +110,21 @@ async def run_devpilot(request: DevPilotRequest):
             message = "Changes were rejected by the human reviewer."
 
         elif human_decision == "approve":
-            status = "stopped"
-            message = (
-                "Changes were approved, but the safe application "
-                "stage is not connected yet. The original repository "
-                "has not been modified."
+            application_result = final_state.get("application_result") or {}
+
+            if application_result.get("status") == "success":
+                status = "completed"
+                message = "Approved changes successfully applied."
+
+            else:
+                status = "stopped"
+                message = (
+                "Changes were approved, but application failed: "
+                + application_result.get(
+                "message",
+                "No application result was returned."
             )
+        )
 
         else:
             status = "stopped"
@@ -133,6 +142,7 @@ async def run_devpilot(request: DevPilotRequest):
             "revision_count": final_state.get("revision_count", 0),
             "approval_request": None,
             "diff_result": final_state.get("diff_result"),
+            "application_result": final_state.get("application_result"),
             "message": message
         }
 
@@ -236,11 +246,21 @@ async def submit_human_approval(
 
         elif request.decision == "approve":
             approval_request = None
-            status = "stopped"
-            message = (
-                "Changes approved, but the safe application stage "
-                "is not connected yet. Original repository unchanged."
+            application_result = result.get("application_result") or {}
+
+            if application_result.get("status") == "success":
+                status = "completed"
+                message = "Changes approved and successfully applied to the original repository."
+
+            else:
+                status = "stopped"
+                message = (
+                "Changes were approved, but application failed: "
+                + application_result.get(
+                "message",
+                "No application result was returned."
             )
+        )
 
         else:
             approval_request = None
@@ -259,6 +279,7 @@ async def submit_human_approval(
             "revision_count": result.get("revision_count", 0),
             "approval_request": approval_request,
             "diff_result": result.get("diff_result"),
+            "application_result": result.get("application_result"),
             "message": message
         }
 

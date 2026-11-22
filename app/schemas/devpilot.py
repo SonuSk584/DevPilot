@@ -46,6 +46,7 @@ class DevPilotResponse(BaseModel):
 
     approval_request: dict[str, Any] | None = None
     diff_result: dict[str, Any] | None = None
+    application_result: dict[str, Any] | None = None
 
     message: str
 
