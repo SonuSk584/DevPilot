@@ -15,7 +15,8 @@ from app.graph.nodes import (
     retry_intelligence_node,
     verification_node,
     human_approval_node,
-    apply_approved_changes_node
+    apply_approved_changes_node,
+    repository_reindex_node,
 )
 
 MAX_CODER_ATTEMPT = 3
@@ -25,6 +26,7 @@ MAX_CODER_ATTEMPT = 3
 # Routers
 # --------------------------------------------------
 
+
 def route_after_patch(state: DevPilotState):
     """A failed patch is cheap to fix: send the exact error back to the Coder."""
     patch = state.get("patch_result") or {}
@@ -32,17 +34,18 @@ def route_after_patch(state: DevPilotState):
     if patch.get("status") == "success":
         return "diff"
 
-    total_attempts = (
-        state.get("revision_count", 0)
-        + state.get("human_revision_count", 0)
-    )
+    revision_count = state.get("revision_count", 0)
 
-    if total_attempts >= MAX_CODER_ATTEMPT:
-        print("[ROUTER] Patch failed and no attempts remain. Ending workflow.")
+    if revision_count >= MAX_CODER_ATTEMPT:
+        print("[ROUTER] Patch failed and no automated attempts remain. Ending workflow.")
         return "end"
 
-    print(f"[ROUTER] Patch failed: {patch.get('error')}. Returning to Coder.")
-    return "coder"
+    print(
+        f"[ROUTER] Patch failed: {patch.get('error')}. "
+        "Re-indexing repository before retry."
+    )
+    return "repository_reindex"
+
 
 
 def route_after_diff(state: DevPilotState):
@@ -113,21 +116,18 @@ def retry_router(state: DevPilotState):
         return "verify"
 
     if retry_analysis.decision == "retry":
-        total_attempts = (
-            state.get("revision_count", 0)
-            + state.get("human_revision_count", 0)
-        )
+        revision_count = state.get("revision_count", 0)
 
-        if total_attempts >= MAX_CODER_ATTEMPT:
-            print("[ROUTER] Maximum combined revision attempts reached.")
+        if revision_count >= MAX_CODER_ATTEMPT:
+            print("[ROUTER] Maximum automated revision attempts reached.")
             return "end"
 
         if not retry_analysis.should_retry:
             print("[ROUTER] Invalid retry decision. Ending workflow.")
             return "end"
 
-        print("[ROUTER] Retry approved. Returning to Coder.")
-        return "coder"
+        print("[ROUTER] Retry approved. Re-indexing repository before retry.")
+        return "repository_reindex"
 
     print("[ROUTER] Unknown retry decision. Ending workflow.")
     return "end"
@@ -173,15 +173,21 @@ def build_devpilot_graph(checkpointer=None):
     g.add_node("verification", verification_node)
     g.add_node("human_approval", human_approval_node)
     g.add_node("apply_changes", apply_approved_changes_node)
+    g.add_node("repository_reindex", repository_reindex_node)
 
     g.add_edge(START, "planner")
     g.add_edge("planner", "repository_analyst")
     g.add_edge("repository_analyst", "coder")
     g.add_edge("coder", "patch_engine")
+    g.add_edge("repository_reindex", "coder")
 
     g.add_conditional_edges(
         "patch_engine", route_after_patch,
-        {"diff": "diff_manager", "coder": "coder", "end": END},
+        {
+        "diff": "diff_manager",
+        "repository_reindex": "repository_reindex",
+        "end": END,
+        },
     )
     g.add_conditional_edges(
         "diff_manager", route_after_diff,
@@ -214,11 +220,11 @@ def build_devpilot_graph(checkpointer=None):
     g.add_conditional_edges(
     "retry_intelligence",
     retry_router,
-    {
-        "coder": "coder",
-        "verify": "verification",
-        "end": END,
-    },
+        {
+    "repository_reindex": "repository_reindex",
+    "verify": "verification",
+    "end": END,
+        },
 )
 
     g.add_conditional_edges(

@@ -29,6 +29,7 @@ class DevPilotState(TypedDict):
     patch_result: NotRequired[dict]
     diff_result: NotRequired[dict]
     execution_result: NotRequired[dict]
+    rag_index_result: NotRequired[dict]
 
 
     # Retry management

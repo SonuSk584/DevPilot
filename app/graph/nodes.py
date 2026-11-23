@@ -11,6 +11,7 @@ from app.service.diff_manager import get_workspace_diff
 from app.service.code_executor import execute_code
 from langgraph.types import interrupt
 from app.service.change_applier import apply_approved_changes
+from app.service.rag.rag_pipeline import retrieve_relevant_chunks
 
 from app.service.llm import (
     get_planner_chain,
@@ -19,6 +20,7 @@ from app.service.llm import (
     get_reviewer_chain,
     get_retry_intelligence_chain
 )
+from app.service.rag.repository_indexer import index_repository
 
 
 ROUTE_SMOKE_SCRIPT = (
@@ -45,7 +47,7 @@ ROUTE_SMOKE_SCRIPT = (
 # well under that. Tune these budgets if you still hit limits.
 # ---------------------------------------------------------------------------
 
-MAX_REPO_CONTEXT_CHARS = 6000
+MAX_REPO_CONTEXT_CHARS = 100_000
 MAX_INVENTORY_CHARS = 2000
 MAX_PROPOSAL_CHARS = 5000
 MAX_DIFF_CHARS = 3000
@@ -149,9 +151,10 @@ async def planner_node(state: DevPilotState):
 
     planner = get_planner_chain()
     inputs = {
-        "task": state["task"],
-        "file_inventory": state["file_inventory"],
-    }
+    "task": state["task"],
+    "file_inventory": state["file_inventory"],
+    "repository_context": state["repository_context"],
+}
 
     try:
         plan = await planner.ainvoke(inputs)
@@ -166,16 +169,56 @@ async def planner_node(state: DevPilotState):
         "plan_obj": plan,                # object for the scope check
     }
 
+
 async def repository_analyst_node(state: DevPilotState):
     print("[DEBUG] Analyst received:", list(state.keys()))
 
     analyst = get_repository_analyst_chain()
+
+    # Retrieve relevant code chunks from the indexed workspace.
+    repository_id = str(
+        Path(state["workspace_path"]).resolve()
+    )
+
+    try:
+        relevant_chunks = retrieve_relevant_chunks(
+            query=(
+                state["task"]
+                + "\n"
+                + state["plan"].model_dump_json()
+            ),
+            repository_id=repository_id,
+            top_k=5,
+        )
+
+        print(
+            f"[RAG] Analyst retrieved {len(relevant_chunks)} relevant chunks."
+        )
+
+        if relevant_chunks:
+            rag_context = "\n\n".join(
+                (
+                    f"FILE: {chunk['file_path']}\n"
+                    f"SYMBOL: {chunk.get('symbol_name') or 'N/A'}\n"
+                    f"LINES: {chunk['line_start']}-{chunk['line_end']}\n"
+                    f"CODE:\n{chunk['content']}"
+                )
+                for chunk in relevant_chunks
+            )
+        else:
+            rag_context = state["repository_context"]
+            print("[RAG] No chunks found. Using original repository context.")
+
+    except Exception as e:
+        print(f"[RAG] Retrieval failed: {e}")
+        rag_context = state["repository_context"]
+
     inputs = {
         "task": state["task"],
         "plan": state["plan"].model_dump_json(),
         "file_inventory": state["file_inventory"],
         "repository_context": truncate(
-            state["repository_context"], MAX_REPO_CONTEXT_CHARS
+            rag_context, MAX_REPO_CONTEXT_CHARS
         ),
     }
 
@@ -187,24 +230,79 @@ async def repository_analyst_node(state: DevPilotState):
 
     return {"repository_analysis": result}
 
+
+
 async def coder_node(state: DevPilotState):
 
     coder = get_coder_chain()
+
+    # Retrieve relevant code chunks for the Coder.
+    repository_id = str(
+        Path(state["workspace_path"]).resolve()
+    )
+    combined_context = state["repository_context"]
+    try:
+        relevant_chunks = retrieve_relevant_chunks(
+            query=(
+                state["task"]
+                + "\n"
+                + state["plan"].model_dump_json()
+                + "\n"
+                + state["repository_analysis"].model_dump_json()
+                + "\n"
+                + state.get("review_feedback", "")
+            ),
+            repository_id=repository_id,
+            top_k=5,
+        )
+
+        print(
+            f"[RAG] Coder retrieved {len(relevant_chunks)} relevant chunks."
+        )
+
+        
+        base_context = state["repository_context"]
+
+        if relevant_chunks:
+            rag_context = "\n\n".join(
+                (
+                    f"FILE: {chunk['file_path']}\n"
+                    f"SYMBOL: {chunk.get('symbol_name') or 'N/A'}\n"
+                    f"LINES: {chunk['line_start']}-{chunk['line_end']}\n"
+                    f"CODE:\n{chunk['content']}"
+                )
+                for chunk in relevant_chunks
+            )
+
+            combined_context = (
+                "COMPLETE ORIGINAL REPOSITORY CONTEXT:\n"
+                f"{base_context}\n\n"
+                "ADDITIONAL RAG RETRIEVAL CONTEXT:\n"
+                f"{rag_context}"
+            )
+        else:
+            combined_context = base_context
+            print("[RAG] No chunks found. Using original repository context.")
+
+
+    except Exception as e:
+        print(f"[RAG] Coder retrieval failed: {e}")
+        combined_context = state["repository_context"]
 
     result = await coder.ainvoke({
 
         "task": state["task"],
 
         "execution_plan": state["plan"].model_dump_json(),
+        "allowed_files": state["plan"].allowed_files,
 
         "repository_analysis": (
             state["repository_analysis"].model_dump_json()
         ),
 
         "repository_context": truncate(
-            state["repository_context"], MAX_REPO_CONTEXT_CHARS
-        ),
-
+            combined_context, MAX_REPO_CONTEXT_CHARS
+            ),
         "review_feedback": truncate(
             state.get(
                 "review_feedback",
@@ -231,12 +329,14 @@ async def coder_node(state: DevPilotState):
             else "No retry analysis available. This is the initial attempt."
         ),
     })
+
     print("[DEBUG] Coder received:", list(state.keys()))
 
     return {
         "code_proposal": result,
         "revision_count": state.get("revision_count", 0) + 1
     }
+
 
 
 async def reviewer_node(state: DevPilotState):
@@ -246,6 +346,7 @@ async def reviewer_node(state: DevPilotState):
     result = await reviewer.ainvoke({
 
         "task": state["task"],
+        "plan": state["plan"].model_dump_json(),
 
         "repository_analysis": (
             state["repository_analysis"].model_dump_json()
@@ -359,12 +460,32 @@ def diff_manager_node(state: DevPilotState):
 
 
 
+def repository_reindex_node(state: DevPilotState) -> dict:
+    """
+    Refresh the repository's RAG index before retrying code generation.
+    """
 
+    repository_path = state.get("workspace_path")
+
+    if not repository_path:
+        raise ValueError("Workspace path is missing from workflow state.")
+
+    result = index_repository(repository_path)
+
+    print(
+        f"[RAG] Repository re-indexed: "
+        f"{result['stored_chunks']} chunks stored."
+    )
+
+    return {
+        "rag_index_result": result,
+    }
 
 
 # --------------------------------------------------
 # Helpers
 # --------------------------------------------------
+
 
 
 def _changed_python_files(diff_result: dict) -> list[str]:
@@ -612,8 +733,8 @@ def attempt_recorder_node(state: DevPilotState):
     review_result = state.get("review_result")
     diff_result = state.get("diff_result") or {}
 
+    # Coder has already incremented this counter.
     current_count = state.get("revision_count", 0)
-    next_count = current_count + 1
 
     changed_files = [
         item["file_path"]
@@ -621,7 +742,7 @@ def attempt_recorder_node(state: DevPilotState):
     ]
 
     attempt = {
-        "attempt_number": next_count,
+        "attempt_number": current_count,
         "files_changed": changed_files,
         "patch_status": patch_result.get("status"),
         "patch_error": truncate(
@@ -644,7 +765,6 @@ def attempt_recorder_node(state: DevPilotState):
     history = list(state.get("attempt_history", []))
 
     return {
-        "revision_count": next_count,
         "attempt_history": history + [attempt]
     }
 

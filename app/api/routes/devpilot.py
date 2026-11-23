@@ -21,6 +21,7 @@ from app.graph.workflow import build_devpilot_graph
 from langgraph.types import Command
 
 from app.schemas.devpilot import HumanApprovalRequest
+from app.service.rag.repository_indexer import index_repository
 
 router = APIRouter()
 
@@ -44,6 +45,12 @@ async def run_devpilot(request: DevPilotRequest):
         repository = ingest_repository(
             str(workspace_relative_path)
         )
+        # 3. Index the isolated workspace for RAG retrieval.
+        index_result = index_repository(
+        workspace["workspace_path"]
+        )
+
+        print("[RAG] Repository indexing:", index_result)
 
         # 4. Generate a persistent execution ID.
         thread_id = uuid.uuid4().hex

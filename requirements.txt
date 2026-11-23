@@ -6,3 +6,6 @@ pydantic-settings
 python-dotenv
 GitPython
 langgraph
+fastembed
+chromadb
+rank-bm25
