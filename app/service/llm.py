@@ -13,15 +13,23 @@ from app.prompt.reviewer import reviewer_prompt
 from app.schemas.retry import RetryAnalysis
 from app.prompt.retry_intelligence import retry_intelligence_prompt
 from langchain_openai import ChatOpenAI
+from langchain.agents import create_agent
 
-def get_llm():
+"""def get_llm():
     llm = ChatOpenAI(
         model="dots-studio/dots-3-note-preview:free",
         api_key=settings.OPENROUTER_API_KEY.get_secret_value(),
         base_url="https://openrouter.ai/api/v1",
         temperature=0,
     )
-    return llm
+    return llm"""
+
+def get_llm():
+    return ChatGroq(
+        model=settings.GROQ_MODEL,
+        api_key=settings.GROQ_API_KEY.get_secret_value(),
+        temperature=0,
+    )
 
 
 

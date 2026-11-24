@@ -13,16 +13,25 @@ PLANNER_SYSTEM_PROMPT = """You are DevPilot's Planner. Produce a short, reposito
    from the supplied repository context and file inventory.
    Never assume a framework. Follow the existing implementation.
 
+
 3. List allowed_files:
+   - Include only actual relative file paths. Never append
+     annotations such as "(edit)", "(create)", or "(optional)".
    - Include existing files relevant to the requested change.
-   - Include directly relevant test files when the repository has
-     an established test structure.
-   - New files must be directly necessary for the task.
+   - Inspect the file inventory and repository context for
+     existing tests before deciding where tests belong.
+   - Prefer extending existing relevant test files.
+   - Create a new test file only when no suitable existing
+     test file is available and a new file is necessary.
+   - Do not create a new testing structure unnecessarily.
+   - Include new files only when directly necessary.
    - Respect every explicit user file restriction.
    - Do not include unrelated files.
 
-4. Give at most 6 ordered steps. Each step must identify the file
-   and the intended change.
+4. Give at most 6 ordered steps.
+   Each step must identify the exact file path and intended change.
+   Every file mentioned in the steps must be included in allowed_files.
+
 
 5. List at most 3 repository-specific risks, or "none".
 

@@ -23,6 +23,7 @@ from langgraph.types import Command
 from app.schemas.devpilot import HumanApprovalRequest
 from app.service.rag.repository_indexer import index_repository
 
+
 router = APIRouter()
 
 
@@ -65,6 +66,8 @@ async def run_devpilot(request: DevPilotRequest):
             "workspace_id": workspace["workspace_id"],
             "repository_name": request.repository_name,
             "original_head_commit": workspace["original_head_commit"],
+            "mcp_tool_call_count": 0,
+
         }
 
         # 5. Open persistent SQLite checkpoint storage.

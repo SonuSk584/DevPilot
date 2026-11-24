@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     GROQ_MODEL: str = "openai/gpt-oss-120b"
     GROQ_API_KEY: SecretStr
     OPENROUTER_API_KEY: SecretStr
+    GITHUB_TOKEN: SecretStr
 
     # Sandbox execution
     SANDBOX_IMAGE: str = "devpilot-sandbox:py312"

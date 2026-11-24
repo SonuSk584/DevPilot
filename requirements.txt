@@ -9,3 +9,4 @@ langgraph
 fastembed
 chromadb
 rank-bm25
+langchain[mcp]

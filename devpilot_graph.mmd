@@ -14,18 +14,52 @@ graph TD;
 	reviewer(reviewer)
 	attempt_recorder(attempt_recorder)
 	retry_intelligence(retry_intelligence)
+	verification(verification)
+	human_approval(human_approval)
+	apply_changes(apply_changes)
+	repository_reindex(repository_reindex)
+	repository_analyst_mcp(repository_analyst_mcp)
+	mcp_tool_executor(mcp_tool_executor)
+	planner_mcp(planner_mcp)
+	coder_mcp(coder_mcp)
+	reviewer_mcp(reviewer_mcp)
 	__end__([<p>__end__</p>]):::last
-	__start__ --> planner;
+	__start__ --> planner_mcp;
 	attempt_recorder --> retry_intelligence;
-	code_executor --> reviewer;
+	code_executor -. &nbsp;end&nbsp; .-> __end__;
+	code_executor -. &nbsp;reviewer&nbsp; .-> reviewer_mcp;
 	coder --> patch_engine;
-	diff_manager --> code_executor;
-	patch_engine --> diff_manager;
-	planner --> repository_analyst;
-	repository_analyst --> coder;
+	coder_mcp -.-> coder;
+	coder_mcp -.-> mcp_tool_executor;
+	diff_manager -. &nbsp;end&nbsp; .-> __end__;
+	diff_manager -. &nbsp;executor&nbsp; .-> code_executor;
+	human_approval -. &nbsp;end&nbsp; .-> __end__;
+	human_approval -. &nbsp;apply&nbsp; .-> apply_changes;
+	human_approval -.-> retry_intelligence;
+	mcp_tool_executor -.-> coder_mcp;
+	mcp_tool_executor -.-> planner_mcp;
+	mcp_tool_executor -.-> repository_analyst_mcp;
+	mcp_tool_executor -.-> reviewer_mcp;
+	patch_engine -. &nbsp;end&nbsp; .-> __end__;
+	patch_engine -. &nbsp;diff&nbsp; .-> diff_manager;
+	patch_engine -.-> repository_reindex;
+	planner --> repository_analyst_mcp;
+	planner_mcp -.-> mcp_tool_executor;
+	planner_mcp -.-> planner;
+	repository_analyst --> coder_mcp;
+	repository_analyst_mcp -.-> mcp_tool_executor;
+	repository_analyst_mcp -.-> repository_analyst;
+	repository_reindex --> coder_mcp;
 	retry_intelligence -. &nbsp;end&nbsp; .-> __end__;
-	retry_intelligence -.-> coder;
-	reviewer --> attempt_recorder;
+	retry_intelligence -.-> repository_reindex;
+	retry_intelligence -. &nbsp;verify&nbsp; .-> verification;
+	reviewer -. &nbsp;recorder&nbsp; .-> attempt_recorder;
+	reviewer -. &nbsp;approval&nbsp; .-> human_approval;
+	reviewer_mcp -.-> mcp_tool_executor;
+	reviewer_mcp -.-> reviewer;
+	verification -. &nbsp;end&nbsp; .-> __end__;
+	verification -.-> retry_intelligence;
+	apply_changes --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc

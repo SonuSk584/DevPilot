@@ -17,6 +17,11 @@ from app.graph.nodes import (
     human_approval_node,
     apply_approved_changes_node,
     repository_reindex_node,
+    repository_analyst_mcp_node,
+    mcp_tool_executor_node,
+    planner_mcp_node,
+    coder_mcp_node,
+    reviewer_mcp_node
 )
 
 MAX_CODER_ATTEMPT = 3
@@ -26,6 +31,85 @@ MAX_CODER_ATTEMPT = 3
 # Routers
 # --------------------------------------------------
 
+def route_after_reviewer_mcp(state: DevPilotState):
+    if state.get("mcp_disabled", False):
+        return "reviewer"
+
+    messages = state.get("messages", [])
+
+    if not messages:
+        return "reviewer"
+
+    if getattr(messages[-1], "tool_calls", None):
+        return "mcp_tool_executor"
+
+    return "reviewer"
+
+
+def route_after_coder_mcp(state: DevPilotState):
+    if state.get("mcp_disabled", False):
+        return "coder"
+
+    messages = state.get("messages", [])
+
+    if not messages:
+        return "coder"
+
+    if getattr(messages[-1], "tool_calls", None):
+        return "mcp_tool_executor"
+
+    return "coder"
+
+
+def route_after_planner_mcp(state: DevPilotState):
+    if state.get("mcp_disabled", False):
+        return "planner"
+
+    messages = state.get("messages", [])
+
+    if not messages:
+        return "planner"
+
+    if getattr(messages[-1], "tool_calls", None):
+        return "mcp_tool_executor"
+
+    return "planner"
+
+
+def route_after_repository_analyst_mcp(state: DevPilotState) -> str:
+    """Route tool requests to the shared executor."""
+
+    if state.get("mcp_disabled", False):
+        return "repository_analyst"
+
+    messages = state.get("messages", [])
+
+    if not messages:
+        return "repository_analyst"
+
+    last_message = messages[-1]
+
+    if getattr(last_message, "tool_calls", None):
+        return "mcp_tool_executor"
+
+    return "repository_analyst"
+
+
+def route_after_mcp_execution(state: DevPilotState) -> str:
+    """Return execution results to the requesting agent."""
+
+    return_to = state.get("mcp_return_to", "repository_analyst_mcp")
+
+    if state.get("mcp_disabled", False):
+        fallback_routes = {
+            "planner_mcp": "planner",
+            "repository_analyst_mcp": "repository_analyst",
+            "coder_mcp": "coder",
+            "reviewer_mcp": "reviewer",
+        }
+        return fallback_routes.get(return_to, "repository_analyst")
+
+    return return_to
 
 def route_after_patch(state: DevPilotState):
     """A failed patch is cheap to fix: send the exact error back to the Coder."""
@@ -174,12 +258,69 @@ def build_devpilot_graph(checkpointer=None):
     g.add_node("human_approval", human_approval_node)
     g.add_node("apply_changes", apply_approved_changes_node)
     g.add_node("repository_reindex", repository_reindex_node)
+    g.add_node(
+        "repository_analyst_mcp",
+        repository_analyst_mcp_node
+    )
+    g.add_node("mcp_tool_executor", mcp_tool_executor_node)
+    g.add_node("planner_mcp", planner_mcp_node)
+    g.add_node("coder_mcp", coder_mcp_node)
+    g.add_node("reviewer_mcp", reviewer_mcp_node)
 
-    g.add_edge(START, "planner")
-    g.add_edge("planner", "repository_analyst")
-    g.add_edge("repository_analyst", "coder")
+
+
+
+
+    g.add_edge(START, "planner_mcp")
+    g.add_conditional_edges(
+    "planner_mcp",
+    route_after_planner_mcp,
+    {
+        "mcp_tool_executor": "mcp_tool_executor",
+        "planner": "planner",
+    },
+    )
+
+    g.add_edge("planner", "repository_analyst_mcp")
+
+    g.add_conditional_edges(
+        "repository_analyst_mcp",
+        route_after_repository_analyst_mcp,
+        {
+            "mcp_tool_executor": "mcp_tool_executor",
+            "repository_analyst": "repository_analyst",
+        },
+    )
+
+    g.add_edge("repository_analyst", "coder_mcp")
+
+    g.add_conditional_edges(
+    "mcp_tool_executor",
+    route_after_mcp_execution,
+    {
+    "repository_analyst_mcp": "repository_analyst_mcp",
+    "planner_mcp": "planner_mcp",
+    "coder_mcp": "coder_mcp",
+    "reviewer_mcp": "reviewer_mcp",
+    "repository_analyst": "repository_analyst",
+    "planner": "planner",
+    "coder": "coder",
+    "reviewer": "reviewer",
+}
+    )
+
+    g.add_conditional_edges(
+    "coder_mcp",
+    route_after_coder_mcp,
+    {
+        "mcp_tool_executor": "mcp_tool_executor",
+        "coder": "coder",
+    },
+    )
+
     g.add_edge("coder", "patch_engine")
-    g.add_edge("repository_reindex", "coder")
+
+    g.add_edge("repository_reindex", "coder_mcp")
 
     g.add_conditional_edges(
         "patch_engine", route_after_patch,
@@ -189,14 +330,27 @@ def build_devpilot_graph(checkpointer=None):
         "end": END,
         },
     )
+
     g.add_conditional_edges(
         "diff_manager", route_after_diff,
         {"executor": "code_executor", "end": END},
     )
+
     g.add_conditional_edges(
-        "code_executor", route_after_execution,
-        {"reviewer": "reviewer", "end": END},
+    "code_executor",
+    route_after_execution,
+    {"reviewer": "reviewer_mcp", "end": END},
+    
     )
+    g.add_conditional_edges(
+    "reviewer_mcp",
+    route_after_reviewer_mcp,
+    {
+        "mcp_tool_executor": "mcp_tool_executor",
+        "reviewer": "reviewer",
+    },
+    )
+    
     g.add_conditional_edges(
     "reviewer",
     route_after_review,

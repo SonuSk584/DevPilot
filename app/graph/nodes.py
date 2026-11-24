@@ -4,6 +4,7 @@ import shlex
 from pathlib import Path
 from app.core.config import settings
 from app.service.dependency_manager import install_project_dependencies
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.graph.state import DevPilotState
 from app.service.patch_engine import apply_code_proposal
@@ -13,14 +14,31 @@ from langgraph.types import interrupt
 from app.service.change_applier import apply_approved_changes
 from app.service.rag.rag_pipeline import retrieve_relevant_chunks
 
+from langchain.agents import create_agent
+from app.mcp.client_manager import MCPClientManager
+from langgraph.prebuilt import ToolNode
+from app.mcp.registry import get_mcp_tools
+from app.service.llm import get_llm
+from app.prompt.repository_analyst import repository_analyst_prompt
+from app.service.mcp_agent import request_mcp_tools
+from langchain_core.messages import ToolMessage, RemoveMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from app.service.mcp_agent import (
+    request_mcp_tools,
+    AGENT_MCP_TOOLS,
+)
+
+
 from app.service.llm import (
     get_planner_chain,
     get_repository_analyst_chain,
     get_coder_chain,
     get_reviewer_chain,
-    get_retry_intelligence_chain
+    get_retry_intelligence_chain,
 )
 from app.service.rag.repository_indexer import index_repository
+
+ANALYST_MCP_SERVERS = {"github"}
 
 
 ROUTE_SMOKE_SCRIPT = (
@@ -213,6 +231,17 @@ async def repository_analyst_node(state: DevPilotState):
         print(f"[RAG] Retrieval failed: {e}")
         rag_context = state["repository_context"]
 
+    mcp_context = "\n\n".join(
+        str(message.content)
+        for message in state.get("messages", [])
+        if isinstance(message, ToolMessage)
+    )
+
+    if mcp_context:
+        rag_context += (
+            "\n\nEXTERNAL MCP RESEARCH RESULTS:\n"
+            + mcp_context
+        )
     inputs = {
         "task": state["task"],
         "plan": state["plan"].model_dump_json(),
@@ -228,7 +257,14 @@ async def repository_analyst_node(state: DevPilotState):
         print(f"[ANALYST] First attempt failed: {e}")
         result = await analyst.ainvoke(inputs)
 
-    return {"repository_analysis": result}
+    output = {"repository_analysis": result}
+
+    if state.get("messages"):
+        output["messages"] = [
+            RemoveMessage(id=REMOVE_ALL_MESSAGES)
+        ]
+
+    return output
 
 
 
@@ -289,20 +325,17 @@ async def coder_node(state: DevPilotState):
         print(f"[RAG] Coder retrieval failed: {e}")
         combined_context = state["repository_context"]
 
-    result = await coder.ainvoke({
-
+    
+    coder_inputs = {
         "task": state["task"],
-
         "execution_plan": state["plan"].model_dump_json(),
         "allowed_files": state["plan"].allowed_files,
-
         "repository_analysis": (
             state["repository_analysis"].model_dump_json()
         ),
-
         "repository_context": truncate(
             combined_context, MAX_REPO_CONTEXT_CHARS
-            ),
+        ),
         "review_feedback": truncate(
             state.get(
                 "review_feedback",
@@ -310,25 +343,45 @@ async def coder_node(state: DevPilotState):
             ),
             1500
         ),
-
         "file_inventory": truncate(
             state["file_inventory"], MAX_INVENTORY_CHARS
         ),
-
         "previous_diff": truncate(
             state.get("diff_result", {}), MAX_DIFF_CHARS
         ),
-
         "previous_execution_result": extract_failures(
             state.get("execution_result", {})
         ),
-
         "retry_analysis": (
             truncate(state["retry_analysis"].model_dump_json(), 2000)
             if state.get("retry_analysis")
             else "No retry analysis available. This is the initial attempt."
         ),
-    })
+    }
+
+    log_payload_sizes("CODER INPUT", coder_inputs)
+
+    print("[DIAGNOSTIC] Coder invocation starting...")
+
+    try:
+        result = await coder.ainvoke(coder_inputs)
+
+        print("[DIAGNOSTIC] Coder invocation completed.")
+        print(
+            "[DIAGNOSTIC] Coder proposal size:",
+            len(result.model_dump_json()),
+            "characters"
+        )
+        print(
+            "[DIAGNOSTIC] Proposed files:",
+            [change.file_path for change in result.changes]
+        )
+
+    except Exception as exc:
+        print(f"[DIAGNOSTIC] Coder invocation failed: {type(exc).__name__}")
+        print(f"[DIAGNOSTIC] Error: {str(exc)[:2000]}")
+        raise
+
 
     print("[DEBUG] Coder received:", list(state.keys()))
 
@@ -389,7 +442,8 @@ async def reviewer_node(state: DevPilotState):
 
     return {
         "review_result": result,
-        "review_feedback": feedback
+        "review_feedback": feedback,
+        "mcp_round_count": 0,
     }
 
 
@@ -485,6 +539,22 @@ def repository_reindex_node(state: DevPilotState) -> dict:
 # --------------------------------------------------
 # Helpers
 # --------------------------------------------------
+
+def log_payload_sizes(label: str, payload: dict) -> None:
+    print(f"\n[DIAGNOSTIC] {label}")
+
+    total_chars = 0
+
+    for key, value in payload.items():
+        if isinstance(value, str):
+            size = len(value)
+        else:
+            size = len(json.dumps(value, default=str))
+
+        total_chars += size
+        print(f"  {key}: {size:,} characters")
+
+    print(f"  TOTAL: {total_chars:,} characters")
 
 
 
@@ -1007,6 +1077,7 @@ def human_approval_node(state: DevPilotState):
 
 
 def apply_approved_changes_node(state: DevPilotState):
+
     """
     Apply changes to the original repository after human approval.
     """
@@ -1049,3 +1120,274 @@ def apply_approved_changes_node(state: DevPilotState):
                 "message": str(error)
             }
         }
+
+# ---------------------------------------------------------------------------
+#               MCP
+# ---------------------------------------------------------------------------
+
+
+
+MAX_MCP_ROUNDS = 4
+MAX_MCP_TOOL_CALLS = 10
+
+
+async def repository_analyst_mcp_node(state: DevPilotState):
+    """Allow the Repository Analyst to request GitHub/docs tools."""
+
+    round_count = state.get("mcp_round_count", 0)
+
+    inputs = {
+        "task": state["task"],
+        "plan": state["plan"].model_dump_json(),
+        "file_inventory": state["file_inventory"],
+        "repository_context": truncate(
+            state["repository_context"],
+            MAX_REPO_CONTEXT_CHARS,
+        ),
+    }
+
+    prompt_messages = repository_analyst_prompt.invoke(
+        inputs
+    ).to_messages()
+
+    history = state.get("messages", [])
+
+    if history:
+        history = history[-2:]
+
+    if round_count >= MAX_MCP_ROUNDS:
+        response = await get_llm().ainvoke(
+            prompt_messages + history
+        )
+    else:
+        response = await request_mcp_tools(
+            prompt_messages + history,
+            allowed_tools=AGENT_MCP_TOOLS["repository_analyst"],
+        )
+
+    return {
+        "messages": [response],
+        "mcp_return_to": "repository_analyst_mcp",
+        "mcp_round_count": round_count + 1,
+    }
+
+
+
+
+async def mcp_tool_executor_node(state: DevPilotState) -> dict:
+    tools = await get_mcp_tools()
+
+    allowed_tools_by_agent = {
+        "repository_analyst_mcp": AGENT_MCP_TOOLS["repository_analyst"],
+        "planner_mcp": AGENT_MCP_TOOLS["planner"],
+        "coder_mcp": AGENT_MCP_TOOLS["coder"],
+        "reviewer_mcp": AGENT_MCP_TOOLS["reviewer"],
+    }
+
+    return_to = state.get("mcp_return_to")
+    allowed_tools = allowed_tools_by_agent.get(return_to)
+
+    if not allowed_tools:
+        raise RuntimeError(
+            f"Unknown MCP requesting agent: {return_to}"
+        )
+
+    selected_tools = {
+        tool.name: tool
+        for tool in tools
+        if tool.name in allowed_tools
+    }
+
+    last_message = state["messages"][-1]
+    tool_messages = []
+    tool_call_count = state.get("mcp_tool_call_count", 0)
+    mcp_disabled = state.get("mcp_disabled", False)
+
+    for tool_call in last_message.tool_calls:
+        tool_name = tool_call["name"]
+
+        if tool_name not in selected_tools:
+            raise RuntimeError(
+                f"Tool is not permitted: {tool_name}"
+            )
+
+        if mcp_disabled or tool_call_count >= MAX_MCP_TOOL_CALLS:
+            mcp_disabled = True
+            content = (
+                f"MCP tool execution limit reached "
+                f"({MAX_MCP_TOOL_CALLS}). MCP is now disabled "
+                "for the remainder of this workflow."
+            )
+
+        else:
+            tool_call_count += 1
+            if tool_call_count >= MAX_MCP_TOOL_CALLS:
+                mcp_disabled = True
+
+            try:
+                result = await selected_tools[tool_name].ainvoke(
+                    tool_call["args"]
+                )
+                content = str(result)
+
+            except Exception as exc:
+                content = f"Tool execution failed: {exc}"
+
+        tool_messages.append(
+            ToolMessage(
+                content=content,
+                tool_call_id=tool_call["id"],
+                name=tool_name,
+            )
+        )
+
+    return {
+        "messages": tool_messages,
+        "mcp_tool_call_count": tool_call_count,
+        "mcp_disabled": mcp_disabled,
+    }
+
+async def planner_mcp_node(state: DevPilotState):
+    """Allow the Planner to research GitHub when needed."""
+
+    round_count = state.get("mcp_round_count", 0)
+
+    messages = [
+        SystemMessage(
+            content=(
+                "You are a repository research assistant for DevPilot's Planner. "
+                "Analyze the coding task and available repository context. "
+                "Use GitHub MCP tools only when external repository information "
+                "or implementation history would materially improve the plan. "
+                "Do not create the implementation plan yourself. "
+                "Do not modify repositories. "
+                "When you have sufficient information, summarize your findings."
+            )
+        ),
+        HumanMessage(
+            content=(
+                f"Task:\n{state['task']}\n\n"
+                f"File inventory:\n{state['file_inventory']}\n\n"
+                f"Repository context:\n"
+                f"{truncate(state['repository_context'], MAX_REPO_CONTEXT_CHARS)}"
+            )
+        ),
+    ]
+
+    history = state.get("messages", [])
+
+    if state.get("mcp_disabled", False) or round_count >= MAX_MCP_ROUNDS:
+        response = await get_llm().ainvoke(messages + history)
+    else:
+        response = await request_mcp_tools(
+            messages + history,
+            allowed_tools=AGENT_MCP_TOOLS["planner"],
+        )
+
+    return {
+        "messages": [response],
+        "mcp_return_to": "planner_mcp",
+        "mcp_round_count": round_count + 1,
+    }
+
+
+
+async def coder_mcp_node(state: DevPilotState):
+    """Allow the Coder to request restricted terminal diagnostics."""
+
+    round_count = state.get("mcp_round_count", 0)
+
+    messages = [
+        SystemMessage(
+            content=(
+                "You are a diagnostic assistant for DevPilot's Coder. "
+                "Analyze the task, implementation plan, and repository context. "
+                "Use permitted Terminal MCP diagnostics only when they are "
+                "needed to understand the development environment. "
+                "Do not modify files or execute arbitrary commands. "
+                "Do not write the implementation. "
+                "When sufficient, summarize relevant diagnostic findings."
+            )
+        ),
+        HumanMessage(
+            content=(
+                f"Task:\n{state['task']}\n\n"
+                f"Plan:\n{state['plan'].model_dump_json()}\n\n"
+                f"Repository context:\n"
+                f"{truncate(state['repository_context'], MAX_REPO_CONTEXT_CHARS)}"
+            )
+        ),
+    ]
+
+    history = state.get("messages", [])
+
+    if state.get("mcp_disabled", False) or round_count >= MAX_MCP_ROUNDS:
+        response = await get_llm().ainvoke(messages + history)
+    else:
+        response = await request_mcp_tools(
+            messages + history,
+            allowed_tools=AGENT_MCP_TOOLS["coder"],
+        )
+
+    return {
+        "messages": [response],
+        "mcp_return_to": "coder_mcp",
+        "mcp_round_count": round_count + 1,
+    }
+
+
+
+
+async def reviewer_mcp_node(state: DevPilotState):
+    """Allow the Reviewer to inspect GitHub and workspace context."""
+
+    round_count = state.get("mcp_round_count", 0)
+
+    messages = [
+        SystemMessage(
+            content=(
+                "You are a research assistant for DevPilot's Code Reviewer. "
+                "Inspect the proposed changes and identify relevant context "
+                "that could help evaluate their correctness and safety. "
+                "Use GitHub MCP tools to inspect existing implementations "
+                "or repository history when useful. Use read-only Terminal "
+                "tools to inspect workspace files and Git status. "
+                "Do not modify files or approve/reject the proposal. "
+                "Do not perform the review yourself. "
+                "When sufficient, summarize relevant findings."
+            )
+        ),
+        HumanMessage(
+            content=(
+                f"Task:\n{state['task']}\n\n"
+                f"Plan:\n{state['plan'].model_dump_json()}\n\n"
+                f"Repository analysis:\n"
+                f"{state['repository_analysis'].model_dump_json()}\n\n"
+                f"Code proposal:\n"
+                f"{truncate(state['code_proposal'].model_dump_json(), MAX_PROPOSAL_CHARS)}\n\n"
+                f"Diff:\n"
+                f"{truncate(state.get('diff_result', {}), MAX_DIFF_CHARS)}\n\n"
+                f"Execution failures:\n"
+                f"{extract_failures(state.get('execution_result', {}))}"
+            )
+        ),
+    ]
+
+    history = state.get("messages", [])
+
+    if history:
+        history = history[-2:]
+
+    if state.get("mcp_disabled", False) or round_count >= MAX_MCP_ROUNDS:
+        response = await get_llm().ainvoke(messages + history)
+    else:
+        response = await request_mcp_tools(
+            messages + history,
+            allowed_tools=AGENT_MCP_TOOLS["reviewer"],
+        )
+
+    return {
+        "messages": [response],
+        "mcp_return_to": "reviewer_mcp",
+        "mcp_round_count": round_count + 1,
+    }
